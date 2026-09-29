@@ -10,11 +10,6 @@ import {
 const A = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho";
 const Aprime = A + " sigma"; // ≥0.85 similar, not identical
 
-// The fuzzy pass leaves `[CCR retrieve ...]` markers, so it only runs for
-// callers that advertise the retrieve tool (MCP-capable) — same contract as
-// the CCR engine itself.
-const RETRIEVE_TOOLS = [{ type: "function", function: { name: "omniroute_ccr_retrieve" } }];
-
 test("fuzzy enabled: a near-duplicate message becomes a recoverable CCR marker", () => {
   resetCcrStore();
   const body = {
@@ -22,7 +17,7 @@ test("fuzzy enabled: a near-duplicate message becomes a recoverable CCR marker",
       { role: "user", content: A },
       { role: "user", content: Aprime },
     ],
-    tools: RETRIEVE_TOOLS,
+    tools: [{ type: "function", function: { name: "omniroute_ccr_retrieve" } }],
   };
   const res = sessionDedupEngine.apply(body, {
     stepConfig: { fuzzy: { enabled: true } },
@@ -60,7 +55,6 @@ test("fuzzy enabled but below threshold → untouched", () => {
           "completely unrelated content with no shared three word windows whatsoever here ok",
       },
     ],
-    tools: RETRIEVE_TOOLS,
   };
   const res = sessionDedupEngine.apply(body, {
     stepConfig: { fuzzy: { enabled: true, minJaccard: 0.85 } },
@@ -83,10 +77,51 @@ test("fuzzy as a bare boolean true also fires (schema advertises type:boolean)",
       { role: "user", content: A },
       { role: "user", content: Aprime },
     ],
-    tools: RETRIEVE_TOOLS,
+    tools: [{ type: "function", function: { name: "omniroute_ccr_retrieve" } }],
   };
   const res = sessionDedupEngine.apply(body, { stepConfig: { fuzzy: true }, principalId: "p1" });
   assert.equal(res.compressed, true);
+  const msgs = res.body.messages as Array<{ content: string }>;
+  assert.match(msgs[1].content, /^\[CCR retrieve hash=[0-9a-f]{24} chars=\d+\]$/);
+});
+
+// The fuzzy pass stores the near-duplicate in the CCR store and replaces the
+// message with a [CCR retrieve] marker. A caller that does not advertise
+// omniroute_ccr_retrieve has no way to expand that marker, so the replacement
+// strands the text. Fuzzy must skip entirely for such callers; exact dedup
+// (the [dedup:ref] marker, which the model resolves by looking back) is
+// unaffected because it does not need a tool.
+test("fuzzy enabled but caller has no retrieve tool: near-duplicate stays verbatim", () => {
+  resetCcrStore();
+  const body = {
+    messages: [
+      { role: "user", content: A },
+      { role: "user", content: Aprime },
+    ],
+    tools: [{ type: "function", function: { name: "get_weather" } }],
+  };
+  const res = sessionDedupEngine.apply(body, {
+    stepConfig: { fuzzy: { enabled: true } },
+    principalId: "p1",
+  });
+  const msgs = res.body.messages as Array<{ content: string }>;
+  assert.equal(msgs[1].content, Aprime, "near-duplicate must not become a CCR marker");
+  assert.equal(res.compressed, false, "nothing else to compress in this fixture");
+});
+
+test("fuzzy enabled and caller advertises the retrieve tool: marker still written", () => {
+  resetCcrStore();
+  const body = {
+    messages: [
+      { role: "user", content: A },
+      { role: "user", content: Aprime },
+    ],
+    tools: [{ type: "function", function: { name: "omniroute_ccr_retrieve" } }],
+  };
+  const res = sessionDedupEngine.apply(body, {
+    stepConfig: { fuzzy: { enabled: true } },
+    principalId: "p1",
+  });
   const msgs = res.body.messages as Array<{ content: string }>;
   assert.match(msgs[1].content, /^\[CCR retrieve hash=[0-9a-f]{24} chars=\d+\]$/);
 });
