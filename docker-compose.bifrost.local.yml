@@ -1,3 +1,0 @@
-services:
-  bifrost:
-    image: ghcr.io/maximhq/bifrost:v1.6.11

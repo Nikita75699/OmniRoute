@@ -61,11 +61,6 @@ export const PreviewRequestSchema = z.object({
   // "ultra" uses scoreToken (0–1); "universal" uses kept/removed from the diff.
   // Omit to skip heatmap computation (normal preview path — no extra cost).
   heatmap: z.enum(["ultra", "universal"]).optional(),
-  // Optional tools[] passthrough: the CCR engine (and the session-dedup fuzzy
-  // pass) only replace blocks when the caller can resolve `omniroute_ccr_retrieve`,
-  // so the studio preview must accept the advertised tools to show the
-  // marker-compressed output an MCP-capable caller would actually get.
-  tools: z.array(z.unknown()).optional(),
 });
 
 function countTokens(text: string): number {
@@ -242,7 +237,6 @@ export async function POST(req: Request) {
     riskGate,
     quantumLock,
     heatmap: heatmapMode,
-    tools,
   } = parsed.data;
   // Alias: `mode: "caveman"` is a synonym for `engineId: "caveman"` (single-engine stacked run).
   // The caveman engine is not a top-level CompressionMode, but it IS a registered engine.
@@ -254,7 +248,7 @@ export async function POST(req: Request) {
 
   try {
     const start = Date.now();
-    const requestBody = { messages, tools };
+    const requestBody = { messages };
     const result = await dispatchCompression(requestBody as Record<string, unknown>, {
       engineId,
       pipeline,

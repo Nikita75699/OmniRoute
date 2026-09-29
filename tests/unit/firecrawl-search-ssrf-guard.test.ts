@@ -2,11 +2,11 @@
  * SSRF guard coverage for /v1/search's Firecrawl provider.
  *
  * `provider_options.baseUrl` (and the legacy top-level `baseUrl` field) is
- * client-controlled and flows into the server-side fetch target built by
- * `buildFirecrawlSearchRequest()`. Policy (aligned with `resolveSearchBaseUrl`
- * in search.ts and the GHSA-j7j4-g9qc-q69c fix): private/LAN hosts are ALLOWED
- * — self-hosted Firecrawl on loopback/LAN is a supported topology — while
- * cloud-metadata endpoints (the SSRF→IAM-credential pivot) are always rejected.
+ * client-controlled and was used verbatim to build the server-side fetch
+ * target in `buildFirecrawlSearchRequest()`, with no SSRF validation. A
+ * caller with a valid API key could redirect the search request to an
+ * internal host (loopback, RFC1918, or a cloud metadata endpoint) and read
+ * the response back through the normal search result shape.
  *
  * Run with:
  *   node --import tsx/esm --test tests/unit/firecrawl-search-ssrf-guard.test.ts
@@ -28,60 +28,33 @@ const config: SearchProviderConfig = {
   costPerQuery: 0,
 } as SearchProviderConfig;
 
-const SELF_HOSTED_BASE_URLS = [
-  "http://127.0.0.1:3002",
-  "http://192.168.105.98:3002",
-  "http://10.0.0.5:3002",
-  "http://localhost:3002",
-];
-
-const METADATA_BASE_URLS = [
+const MALICIOUS_BASE_URLS = [
+  "http://127.0.0.1:22",
   "http://169.254.169.254/latest/meta-data/", // AWS IMDS
-  "http://metadata.google.internal/computeMetadata/v1/",
+  "http://10.0.0.5:6379",
+  "http://localhost:20128/api/admin",
 ];
 
 describe("buildFirecrawlSearchRequest — SSRF guard on client-controlled baseUrl", () => {
-  for (const selfHostedBase of SELF_HOSTED_BASE_URLS) {
-    it(`allows provider_options.baseUrl pointing at self-hosted ${selfHostedBase}`, () => {
-      const { url } = buildFirecrawlSearchRequest(config, {
-        query: "test",
-        searchType: "web",
-        maxResults: 5,
-        providerSpecificData: { baseUrl: selfHostedBase },
-      });
-      assert.equal(url, `${selfHostedBase.replace(/\/+$/, "")}/v2/search`);
-    });
-
-    it(`allows top-level baseUrl pointing at self-hosted ${selfHostedBase}`, () => {
-      const { url } = buildFirecrawlSearchRequest(config, {
-        query: "test",
-        searchType: "web",
-        maxResults: 5,
-        baseUrl: selfHostedBase,
-      });
-      assert.equal(url, `${selfHostedBase.replace(/\/+$/, "")}/v2/search`);
-    });
-  }
-
-  for (const metadataBase of METADATA_BASE_URLS) {
-    it(`rejects provider_options.baseUrl pointing at ${metadataBase}`, () => {
+  for (const maliciousBase of MALICIOUS_BASE_URLS) {
+    it(`rejects provider_options.baseUrl pointing at ${maliciousBase}`, () => {
       assert.throws(() => {
         buildFirecrawlSearchRequest(config, {
           query: "test",
           searchType: "web",
           maxResults: 5,
-          providerSpecificData: { baseUrl: metadataBase },
+          providerSpecificData: { baseUrl: maliciousBase },
         });
       });
     });
 
-    it(`rejects top-level baseUrl pointing at ${metadataBase}`, () => {
+    it(`rejects top-level baseUrl pointing at ${maliciousBase}`, () => {
       assert.throws(() => {
         buildFirecrawlSearchRequest(config, {
           query: "test",
           searchType: "web",
           maxResults: 5,
-          baseUrl: metadataBase,
+          baseUrl: maliciousBase,
         });
       });
     });
